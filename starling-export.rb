@@ -23,12 +23,17 @@ command :qif do |c|
   c.description = ''
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
+  c.option '--from STRING', String, 'The date (YYYY-MM-DD) to start exporting transactions from. Defaults to 2 weeks ago'
+  c.option '--to STRING', String, 'The date (YYYY-MM-DD) to exporting transactions to. Defaults to today'
   c.action do |args, options|
     options.default directory: "#{File.dirname(__FILE__)}/exports"
+    from = options.from ? Date.parse(options.from).to_time.strftime('%F') : (Time.now - (60*60*24*14)).to_date.strftime('%F')
+    to = options.to ? Date.parse(options.to).to_time.strftime('%F') : Time.now.to_date.strftime('%F')
     path = "#{options.directory}/starling.qif"
+    all_transactions = transactions(options.access_token, from, to)
     Qif::Writer.open(path, type = 'Bank', format = 'dd/mm/yyyy') do |qif|
 
-      all_transactions = transactions(options.access_token)
+      all_transactions = transactions(options.access_token, from, to)
       total_count = all_transactions.size
 
       all_transactions.reverse.each_with_index do |transaction, index|
@@ -107,8 +112,11 @@ end
 
 def transactions(access_token)
   perform_request("/transactions", access_token)['_embedded']['transactions']
+def transactions(access_token, from, to)
+  transactions = perform_request("/transactions?from=#{from}&to=#{to}", access_token)['_embedded']['transactions']
 end
 
+      when 'DIRECT_DEBIT' then 'direct-debit'
 def balance(access_token)
   perform_request("/accounts/balance", access_token)['availableToSpend']
 end
