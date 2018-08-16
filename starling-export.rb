@@ -45,8 +45,10 @@ command :qif do |c|
         qif << Qif::Transaction.new(
           date: DateTime.parse(transaction['created']).to_date,
           amount: transaction['amount'],
-          memo: nil,
-          payee: transaction['narrative']
+          status: transaction['status'] == "SETTLED" ? 'c' : nil,
+          memo: "#{transaction['source']} - #{transaction['narrative']}",
+          payee: transaction['narrative'],
+          category: transaction['spendingCategory'],
         )
       end
     end
@@ -110,13 +112,24 @@ def perform_request(path, access_token)
   JSON.parse(RestClient.get(url, {:Authorization => "Bearer #{access_token}"}))
 end
 
-def transactions(access_token)
-  perform_request("/transactions", access_token)['_embedded']['transactions']
 def transactions(access_token, from, to)
   transactions = perform_request("/transactions?from=#{from}&to=#{to}", access_token)['_embedded']['transactions']
+  transactions.map!{|t| get_extended_deets(t, access_token)}
 end
 
+def get_extended_deets(txn, access_token)
+
+  path = case txn['source']
+      when 'MASTER_CARD' then 'mastercard'
+      when 'FASTER_PAYMENTS_IN', 'FASTER_PAYMENTS_OUT' then "fps/#{txn['source'].split('_').last.downcase}"
       when 'DIRECT_DEBIT' then 'direct-debit'
+      else nil
+    end
+
+  path.nil? ? txn : perform_request("/transactions/#{path}/#{txn['id']}", access_token)
+end
+
+
 def balance(access_token)
   perform_request("/accounts/balance", access_token)['availableToSpend']
 end
