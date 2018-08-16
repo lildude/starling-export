@@ -24,7 +24,7 @@ command :qif do |c|
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
   c.action do |args, options|
-    options.default directory: "#{File.dirname(__FILE__)}/tmp"
+    options.default directory: "#{File.dirname(__FILE__)}/exports"
     path = "#{options.directory}/starling.qif"
     Qif::Writer.open(path, type = 'Bank', format = 'dd/mm/yyyy') do |qif|
 
@@ -58,7 +58,7 @@ command :csv do |c|
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
   c.action do |args, options|
-    options.default directory: "#{File.dirname(__FILE__)}/tmp"
+    options.default directory: "#{File.dirname(__FILE__)}/exports"
     path = "#{options.directory}/starling.csv"
 
     CSV.open(path, "wb") do |csv|
