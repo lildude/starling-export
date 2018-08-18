@@ -48,7 +48,8 @@ command :qif do |c|
           status: transaction['status'] == "SETTLED" ? 'c' : nil,
           memo: "#{transaction['source']} - #{transaction['narrative']}",
           payee: transaction['narrative'],
-          category: transaction['spendingCategory'],
+          number: set_number(transaction),
+          category: map_category(transaction),
         )
       end
     end
@@ -114,11 +115,19 @@ end
 
 def transactions(access_token, from, to)
   transactions = perform_request("/transactions?from=#{from}&to=#{to}", access_token)['_embedded']['transactions']
-  transactions.map!{|t| get_extended_deets(t, access_token)}
+  transactions.map!{|t| get_extended_details(t, access_token)}
 end
 
-def get_extended_deets(txn, access_token)
+def balance(access_token)
+  perform_request("/accounts/balance", access_token)['availableToSpend']
+end
 
+def account(access_token)
+  perform_request("/accounts", access_token)
+end
+
+
+def get_extended_details(txn, access_token)
   path = case txn['source']
       when 'MASTER_CARD' then 'mastercard'
       when 'FASTER_PAYMENTS_IN', 'FASTER_PAYMENTS_OUT' then "fps/#{txn['source'].split('_').last.downcase}"
@@ -129,11 +138,36 @@ def get_extended_deets(txn, access_token)
   path.nil? ? txn : perform_request("/transactions/#{path}/#{txn['id']}", access_token)
 end
 
-
-def balance(access_token)
-  perform_request("/accounts/balance", access_token)['availableToSpend']
+def set_number(txn)
+  return 'Online' if txn['mastercardTransactionMethod'] == 'ONLINE'
+  return 'ATM' if txn['mastercardTransactionMethod'] == 'ATM'
+  return 'Transfer' if txn['source'] == 'INTERNAL_TRANSFER'
+  return 'Deposit' if txn['amount'] > 0
+  return 'POS'
 end
 
-def account(access_token)
-  perform_request("/accounts", access_token)
-end
+def map_category(txn)
+    return nil unless txn['spendingCategory']
+    cat = txn['spendingCategory']
+
+    category_map = {
+      'BILLS_AND_SERVICES'  => nil,
+      'EATING_OUT'          => 'Dining:Restaurants',
+      'ENTERTAINMENT'       => 'Entertainment',
+      'EXPENSES'            => 'Work Expenses',
+      'GENERAL'             => nil,
+      'GIFTS'               => 'Gifts',
+      'GROCERIES'           => 'Groceries',
+      'SHOPPING'            => 'Clothing',
+      'HOLIDAYS'            => 'Travel',
+      'PAYMENTS'            => nil,
+      'TRANSPORT'           => 'Travel',
+      'LIFESTYLE'           => nil,
+    }
+
+    return category_map[cat] if category_map.include?(cat)
+    return 'ATM' if txn['mastercardTransactionMethod'] == 'ATM'
+    return 'Interest Received' if txn['mastercardTransactionMethod'] == 'INTEREST_PAYMENT'
+
+    nil
+  end
