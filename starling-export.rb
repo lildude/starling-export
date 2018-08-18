@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# WARNING: This uses the unstable v2 API so will probably break at some point
 
 lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
@@ -23,33 +24,31 @@ command :qif do |c|
   c.description = ''
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
-  c.option '--from STRING', String, 'The date (YYYY-MM-DD) to start exporting transactions from. Defaults to 2 weeks ago'
-  c.option '--to STRING', String, 'The date (YYYY-MM-DD) to exporting transactions to. Defaults to today'
+  c.option '--since STRING', String, 'The date (YYYY-MM-DD) to start exporting transactions from. Defaults to 2 weeks ago'
   c.action do |args, options|
-    options.default directory: "#{File.dirname(__FILE__)}/exports"
-    from = options.from ? Date.parse(options.from).to_time.strftime('%F') : (Time.now - (60*60*24*14)).to_date.strftime('%F')
-    to = options.to ? Date.parse(options.to).to_time.strftime('%F') : Time.now.to_date.strftime('%F')
-    path = "#{options.directory}/starling-#{from}-#{to}.qif"
-
     @access_token ||= options.access_token
+    since = options.since ? Date.parse(options.since).to_time.strftime('%FT00:00:01.000Z') : (Time.now - (60*60*24*14)).to_date.strftime('%FT00:00:01.000Z')
+    options.default directory: "#{File.dirname(__FILE__)}/exports"
+    path = "#{options.directory}/starling-#{since}.qif"
 
     Qif::Writer.open(path, type = 'Bank', format = 'dd/mm/yyyy') do |qif|
 
-      all_transactions = transactions(from, to)
+      all_transactions = transactions_v2(since)
       total_count = all_transactions.size
 
       all_transactions.reverse.each_with_index do |transaction, index|
-        amount = (transaction['amount'].to_f).abs.to_s.ljust(6, ' ')
-        amount_with_color = transaction['amount'] > 0 ? amount.green : amount.red
+        amount = (transaction['amount']['minorUnits'].to_f / 100).abs.to_s.ljust(6, ' ')
+        amount_with_color = transaction['direction'] == 'IN' ? amount.green : amount.red
+        amount = "-#{amount}" if transaction['direction'] == 'OUT'
 
-        puts "[#{(index + 1).to_s.rjust(total_count.to_s.length) }/#{total_count}] #{Date.parse(transaction['created']).to_s} - #{transaction['id']} - #{amount_with_color}  "
+        puts "[#{(index + 1).to_s.rjust(total_count.to_s.length) }/#{total_count}] #{Date.parse(transaction['transactionTime']).to_s} - #{transaction['feedItemUid']} - #{amount_with_color}  "
 
         qif << Qif::Transaction.new(
-          date: DateTime.parse(transaction['created']).to_date,
-          amount: transaction['amount'],
+          date: DateTime.parse(transaction['transactionTime']).to_date,
+          amount: '%.2f' % amount,
           status: transaction['status'] == "SETTLED" ? 'c' : nil,
-          memo: "#{transaction['source']} - #{transaction['narrative']}",
-          payee: transaction['narrative'],
+          memo: "#{transaction['reference']}",
+          payee: transaction['counterPartyName'],
           number: set_number(transaction),
           category: map_category(transaction),
         )
@@ -67,28 +66,31 @@ command :csv do |c|
   c.description = ''
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
+  c.option '--since STRING', String, 'The date (YYYY-MM-DD) to start exporting transactions from. Defaults to 2 weeks ago'
   c.action do |args, options|
     @access_token ||= options.access_token
+    since = options.since ? Date.parse(options.since).to_time.strftime('%FT00:00:01.000Z') : (Time.now - (60*60*24*14)).to_date.strftime('%FT00:00:01.000Z')
     options.default directory: "#{File.dirname(__FILE__)}/exports"
-    path = "#{options.directory}/starling.csv"
+    path = "#{options.directory}/starling-#{since}.csv"
 
     CSV.open(path, "wb") do |csv|
       csv << [:date, :description, :amount, :balance]
 
-      all_transactions = transactions()
+      all_transactions = transactions_v2(since)
       total_count = all_transactions.size
 
       all_transactions.reverse.each_with_index do |transaction, index|
 
-        amount = (transaction['amount'].to_f).abs.to_s.ljust(6, ' ')
-        amount_with_color = transaction['amount'] > 0 ? amount.green : amount.red
+        amount = (transaction['amount']['minorUnits'].to_f / 100).abs.to_s.ljust(6, ' ')
+        amount_with_color = transaction['direction'] == 'IN' ? amount.green : amount.red
+        amount = "-#{amount}" if transaction['direction'] == 'OUT'
 
-        puts "[#{(index + 1).to_s.rjust(total_count.to_s.length) }/#{total_count}] #{Date.parse(transaction['created']).to_s} - #{transaction['id']} - #{amount_with_color}  "
+        puts "[#{(index + 1).to_s.rjust(total_count.to_s.length) }/#{total_count}] #{Date.parse(transaction['transactionTime']).to_s} - #{transaction['feedItemUid']} - #{amount_with_color}  "
 
         csv << [
-          DateTime.parse(transaction['created']).strftime("%d/%m/%y"),
-          transaction['narrative'],
-          transaction['amount'],
+          DateTime.parse(transaction['transactionTime']).strftime("%d/%m/%y"),
+          transaction['counterPartyName'],
+          '%.2f' % amount,
           transaction['balance']
         ]
       end
@@ -105,54 +107,43 @@ command :balance do |c|
   c.option '--access_token STRING', String, 'The access_token from Starling'
   c.action do |args, options|
     @access_token ||= options.access_token
-    account_data = account()
-    puts "Account Number: #{account_data['accountNumber']}"
-    puts "Sort Code: #{account_data['sortCode']}"
-    puts "Balance: £#{balance()}"
+    account_data = account_v2()
+    #puts "Account Number: #{account_data['accountNumber']}"
+    #puts "Sort Code: #{account_data['sortCode']}"
+    puts "Balance: £#{balance_v2(account_data['accountUid'])}"
   end
 end
 
 def perform_request(path)
   url = "https://api.starlingbank.com/api/#{path}"
   JSON.parse(RestClient.get(url, {:Authorization => "Bearer #{@access_token}"}))
-  #JSON.parse(RestClient::Request.execute(method: :get, url: url, headers: {:Authorization => "Bearer #{access_token}"}, timeout: 60))
 end
 
-def transactions(from, to)
-  transactions = perform_request("v1/transactions?from=#{from}&to=#{to}")['_embedded']['transactions']
-  transactions.map!{|t| get_extended_details(t)}
+def account_v2
+  perform_request("v2/accounts")
 end
 
-def balance
-  perform_request("v1/accounts/balance")['availableToSpend']
+def balance_v2(acc_id = nil)
+  unless acc_id
+    account = account_v2()['accounts'].first
+    acc_id = account['accountUid']
+  end
+  perform_request("v2/accounts/#{acc_id}/balance")['availableToSpend']['minorUnits'].to_f / 100
 end
 
-def account
-  perform_request("v1/accounts")
-end
+def transactions_v2(from)
+  account = account_v2()['accounts'].first
+  acc_id = account['accountUid']
+  cat_id = account['defaultCategory']
 
-# TODO: this needs backoff handling as Starling throttle/block access after an
-# undetermined number of quick successive API requests.
-def get_extended_details(txn)
-  path = case txn['source']
-      when 'MASTER_CARD' then 'mastercard'
-      when 'FASTER_PAYMENTS_IN', 'FASTER_PAYMENTS_OUT' then "fps/#{txn['source'].split('_').last.downcase}"
-      when 'DIRECT_DEBIT' then 'direct-debit'
-      else nil
-    end
-  path.nil? ? txn : perform_request("v1/transactions/#{path}/#{txn['id']}")
-end
-
-# WARNING: This uses the unstable v2 API so will probably break at some point
-def get_extended_details_v2(txn)
-  account_id = account()
+  perform_request("v2/feed/account/#{acc_id}/category/#{cat_id}/?changesSince=#{from}")['feedItems']
 end
 
 def set_number(txn)
-  return 'Online' if txn['mastercardTransactionMethod'] == 'ONLINE'
-  return 'ATM' if txn['mastercardTransactionMethod'] == 'ATM'
+  return 'Online' if txn['sourceSubType'] && txn['sourceSubType'] == 'ONLINE'
+  return 'ATM' if txn['sourceSubType'] && txn['sourceSubType'] == 'ATM'
   return 'Transfer' if txn['source'] == 'INTERNAL_TRANSFER'
-  return 'Deposit' if txn['amount'] > 0
+  return 'Deposit' if txn['direction'] == 'IN'
   return 'POS'
 end
 
@@ -162,22 +153,28 @@ def map_category(txn)
 
     category_map = {
       'BILLS_AND_SERVICES'  => nil,
+      'CHARITY'             => 'Charity',
       'EATING_OUT'          => 'Dining:Restaurants',
       'ENTERTAINMENT'       => 'Entertainment',
       'EXPENSES'            => 'Work Expenses',
+      'FAMILY'              => 'Household',
       'GENERAL'             => nil,
       'GIFTS'               => 'Gifts',
       'GROCERIES'           => 'Groceries',
+      'HOME'                => 'Household:Home Maintenance',
+      'INCOME'              => nil,
+      'SAVING'              => nil,
       'SHOPPING'            => 'Clothing',
       'HOLIDAYS'            => 'Travel',
       'PAYMENTS'            => nil,
+      'PETS'                => nil,
       'TRANSPORT'           => 'Travel',
       'LIFESTYLE'           => nil,
     }
 
     return category_map[cat] if category_map.include?(cat)
-    return 'ATM' if txn['mastercardTransactionMethod'] == 'ATM'
-    return 'Interest Received' if txn['mastercardTransactionMethod'] == 'INTEREST_PAYMENT'
+    return 'ATM' if txn['sourceSubType'] && txn['sourceSubType'] == 'ATM'
+    return 'Interest Received' if txn['source'] == 'INTEREST_PAYMENT'
 
     nil
   end
