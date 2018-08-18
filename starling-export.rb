@@ -30,9 +30,12 @@ command :qif do |c|
     from = options.from ? Date.parse(options.from).to_time.strftime('%F') : (Time.now - (60*60*24*14)).to_date.strftime('%F')
     to = options.to ? Date.parse(options.to).to_time.strftime('%F') : Time.now.to_date.strftime('%F')
     path = "#{options.directory}/starling-#{from}-#{to}.qif"
+
+    @access_token ||= options.access_token
+
     Qif::Writer.open(path, type = 'Bank', format = 'dd/mm/yyyy') do |qif|
 
-      all_transactions = transactions(options.access_token, from, to)
+      all_transactions = transactions(from, to)
       total_count = all_transactions.size
 
       all_transactions.reverse.each_with_index do |transaction, index|
@@ -65,13 +68,14 @@ command :csv do |c|
   c.option '--directory STRING', String, 'The directory to save this file'
   c.option '--access_token STRING', String, 'The access_token from Starling'
   c.action do |args, options|
+    @access_token ||= options.access_token
     options.default directory: "#{File.dirname(__FILE__)}/exports"
     path = "#{options.directory}/starling.csv"
 
     CSV.open(path, "wb") do |csv|
       csv << [:date, :description, :amount, :balance]
 
-      all_transactions = transactions(options.access_token)
+      all_transactions = transactions()
       total_count = all_transactions.size
 
       all_transactions.reverse.each_with_index do |transaction, index|
@@ -100,41 +104,48 @@ command :balance do |c|
   c.summary = ''
   c.option '--access_token STRING', String, 'The access_token from Starling'
   c.action do |args, options|
-    account_data = account(options.access_token)
+    @access_token ||= options.access_token
+    account_data = account()
     puts "Account Number: #{account_data['accountNumber']}"
     puts "Sort Code: #{account_data['sortCode']}"
-    puts "Balance: £#{balance(options.access_token)}"
+    puts "Balance: £#{balance()}"
   end
 end
 
-def perform_request(path, access_token)
-  url = "https://api.starlingbank.com/api/v1#{path}"
-  JSON.parse(RestClient.get(url, {:Authorization => "Bearer #{access_token}"}))
+def perform_request(path)
+  url = "https://api.starlingbank.com/api/#{path}"
+  JSON.parse(RestClient.get(url, {:Authorization => "Bearer #{@access_token}"}))
+  #JSON.parse(RestClient::Request.execute(method: :get, url: url, headers: {:Authorization => "Bearer #{access_token}"}, timeout: 60))
 end
 
-def transactions(access_token, from, to)
-  transactions = perform_request("/transactions?from=#{from}&to=#{to}", access_token)['_embedded']['transactions']
-  transactions.map!{|t| get_extended_details(t, access_token)}
+def transactions(from, to)
+  transactions = perform_request("v1/transactions?from=#{from}&to=#{to}")['_embedded']['transactions']
+  transactions.map!{|t| get_extended_details(t)}
 end
 
-def balance(access_token)
-  perform_request("/accounts/balance", access_token)['availableToSpend']
+def balance
+  perform_request("v1/accounts/balance")['availableToSpend']
 end
 
-def account(access_token)
-  perform_request("/accounts", access_token)
+def account
+  perform_request("v1/accounts")
 end
 
-
-def get_extended_details(txn, access_token)
+# TODO: this needs backoff handling as Starling throttle/block access after an
+# undetermined number of quick successive API requests.
+def get_extended_details(txn)
   path = case txn['source']
       when 'MASTER_CARD' then 'mastercard'
       when 'FASTER_PAYMENTS_IN', 'FASTER_PAYMENTS_OUT' then "fps/#{txn['source'].split('_').last.downcase}"
       when 'DIRECT_DEBIT' then 'direct-debit'
       else nil
     end
+  path.nil? ? txn : perform_request("v1/transactions/#{path}/#{txn['id']}")
+end
 
-  path.nil? ? txn : perform_request("/transactions/#{path}/#{txn['id']}", access_token)
+# WARNING: This uses the unstable v2 API so will probably break at some point
+def get_extended_details_v2(txn)
+  account_id = account()
 end
 
 def set_number(txn)
