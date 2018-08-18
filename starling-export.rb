@@ -30,7 +30,6 @@ command :qif do |c|
     from = options.from ? Date.parse(options.from).to_time.strftime('%F') : (Time.now - (60*60*24*14)).to_date.strftime('%F')
     to = options.to ? Date.parse(options.to).to_time.strftime('%F') : Time.now.to_date.strftime('%F')
     path = "#{options.directory}/starling-#{from}-#{to}.qif"
-    all_transactions = transactions(options.access_token, from, to)
     Qif::Writer.open(path, type = 'Bank', format = 'dd/mm/yyyy') do |qif|
 
       all_transactions = transactions(options.access_token, from, to)
