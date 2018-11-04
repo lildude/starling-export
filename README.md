@@ -9,10 +9,10 @@ It also implements custom mappings for categories and the "number" field that fi
 ### How to use:
 
 ```
-ruby starling-export.rb qif --access_token=#{access_token}
-ruby starling-export.rb csv --access_token=#{access_token}
+ruby starling-export.rb qif --access_token=#{access_token} --since=2018-06-01
+ruby starling-export.rb csv --access_token=#{access_token} --since=2018-06-01
 ```
 
 ### access_token
 
-Get a token from here https://developer.starlingbank.com/token/list
+Get a token from here https://developer.starlingbank.com/personal/list
